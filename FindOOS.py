@@ -2,7 +2,10 @@ import MySQLdb, sys, re, pprint, csv
 from dotenv import load_dotenv, find_dotenv
 import os
 
-''' Find product posts that are published but out-of-stock, and set them to draft.
+'''
+    python FindOOS.py [v] [wet]
+
+Find product posts that are published but out-of-stock, and set them to draft.
 Brute Force:
     - find all product posts
     - if simple product ...
@@ -15,15 +18,15 @@ Brute Force:
 
 
 isVerbose = False #global variable, used in debugPrint()
+dryRun = True
 oosProducts = list()
 productsChanged = 0
 
 
 def main():
-    # check verbosity flag
-    global isVerbose, productsChanged, oosProducts
-    if len(sys.argv) == 2 and (sys.argv[1] == 'v' or sys.argv[1] == '-v'):
-        isVerbose = True
+    global isVerbose, productsChanged, oosProducts, dryRun
+    # parse arguments
+    parseArgs(sys.argv)
     # get credentials from dotenv
     load_dotenv(find_dotenv())
     DB_USER = os.environ.get('DB_USER')
@@ -48,10 +51,11 @@ def main():
     # exit procedures
     db.close()
     # print list of out of stock products to display
-    print(f'\n--\nOut Of Stock Products\n--')
-    pp = pprint.PrettyPrinter(indent=4)
-    pp.pprint(oosProducts)
-    print('\n--')
+    if isVerbose:
+        print(f'\n--\nOut Of Stock Products\n--')
+        pp = pprint.PrettyPrinter(indent=4)
+        pp.pprint(oosProducts)
+        print('\n--')
     # print general overall stats
     print(f'\n--\nTotal Products Changed: {productsChanged}\n--\n')
     # output to csv file
@@ -59,6 +63,30 @@ def main():
         writer = csv.writer(f)
         for row in oosProducts:
             writer.writerow(row)
+    print('-- results.csv saved --')
+    if not dryRun:
+        print('-- Changes were made to the database --')
+
+
+def parseArgs(args):
+    global isVerbose, dryRun
+    # remove name of script from args list
+    if len(args) >= 1:
+        del args[0]
+    # check boundaries, not too small, not too big
+    if len(args) < 1 or len(args) > 2:
+        print('Bad syntax.')
+        print('Usage: python FindOOS.py [v] [wet]')
+        sys.exit()
+    # check for flags
+    for arg in args:
+        if arg == 'v':
+            isVerbose = True
+        elif arg == 'wet':
+            dryRun = False
+        else:
+            print(f'unrecognized argument: {arg}')
+            sys.exit()
 
 
 def processVariableProduct(cnx,pid,children):
@@ -163,7 +191,7 @@ def getPostTitle(cnx,pid):
     query = f'''
 SELECT post_title
 FROM wp_posts
-WHERE id = {pid}
+WHERE id = '{pid}'
 ;'''
     cnx.execute(query)
     title = cnx.fetchall()
@@ -174,23 +202,47 @@ WHERE id = {pid}
 def getLink(pid):
     return f'http://www.sousouus.com/wp-admin/post.php?post={pid}&action=edit'
 
+
 def setPostStatus(cnx,pid,status):
-    ''' TODO: set post_status to 'draft' '''
+    ''' set post_status flag '''
+    query = f'''
+UPDATE wp_posts
+SET post_status = '{status}'
+WHERE id = '{pid}'
+;'''
+    if not dryRun:
+        cnx.execute(query)
 
 
 def setManageStock(cnx,pid,meta_value):
-    ''' TODO: set _manage_stock to 'yes' '''
+    ''' set _manage_stock flag '''
+    query = f'''
+UPDATE wp_postmeta
+SET meta_value = '{meta_value}'
+WHERE post_id = '{pid}'
+    AND meta_key = '_manage_stock'
+;'''
+    if not dryRun:
+        cnx.execute(query)
 
 
 def setStockStatus(cnx,pid,stock_status):
-    ''' TODO: set _stock_status to 'outofstock' '''
+    ''' set _stock_status flag '''
+    query = f'''
+UPDATE wp_postmeta
+SET meta_value = '{stock_status}'
+WHERE post_id = '{pid}'
+    AND meta_key = '_stock_status'
+;'''
+    if not dryRun:
+        cnx.execute(query)
 
 
 def queryPostStatus(pid):
     query = f'''
 SELECT post_status
 FROM wp_posts
-WHERE id = {pid}
+WHERE id = '{pid}'
 ;'''
     return query
 
@@ -200,7 +252,7 @@ def queryManageStock(pid):
 SELECT meta_value
 FROM wp_postmeta
 WHERE meta_key = '_manage_stock'
-    AND post_id = {pid}
+    AND post_id = '{pid}'
 ;'''
     return query
 
@@ -210,7 +262,7 @@ def queryStockStatus(pid):
 SELECT meta_value
 FROM wp_postmeta
 WHERE meta_key = '_stock_status'
-    AND post_id = {pid}
+    AND post_id = '{pid}'
 ;'''
     return query
 
@@ -226,7 +278,7 @@ def queryStockCount(pid):
 SELECT meta_value
 FROM wp_postmeta
 WHERE meta_key = '_stock'
-    AND post_id = {pid}
+    AND post_id = '{pid}'
 ;'''
     return query
 
@@ -235,7 +287,7 @@ def queryForChildProducts(pid):
     query = f'''
 SELECT id
 FROM wp_posts
-WHERE post_parent = {pid}
+WHERE post_parent = '{pid}'
     AND post_type = 'product_variation'
 ;'''
     return query
